@@ -455,6 +455,9 @@ class DFWS:
         return self.zCoeffs
         
     def wavefront_to_128(self):
+        #Reduce the resolution of the wavefront to 128x128 pixels to decrease the size 
+        #exported wavefront. 
+        
         Pupil_func = numpy.array(aotools.functions.pupil.circle(340, 680), dtype = 'uint8')
         downres2 = numpy.around(numpy.arange(0, 680, 680/128)).astype('uint16')
         self.wavefront = self.wavefront[0:self.res, 0:self.res]
