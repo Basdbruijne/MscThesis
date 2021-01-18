@@ -1,5 +1,5 @@
 """
-Unet_trainer V2
+Unet_trainer
 
 An example file for how to import data and set up and train a neural network
 
