@@ -9,6 +9,38 @@ References:
 
 1 - Jason D. Schmidt, "Numerical Simulation of Optical Wave Propagation with Examples in MATLAB"
 
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+
+EXAMPLE OF HOW TO USE THIS FILE
+
+import DFWS_Simulator as sim
+
+dfws = sim.DFWS(1, 6, 680, 680, 0, 0, .6)   # Initialise system with diameter of 1, 6x6 shack-hartmann sensor and 680x680 pixels of imaging resolution
+
+dfws.random_object()                        # Load Object
+
+dfws.wavefront_kolmogorov(0.2)              # Make D/r0 = 5 turbulent phase screen
+
+dfws.make_psf()                             # Adjust the wavefront to the right size and generate the point spread functions
+
+dfws.make_image()                           # Generate the output images
+
+
+Variables contained within dfws:
+
+    - dfws.psf                              # point spread function of main sensor
+
+    - dfws.psf_sh                           # point spread function of shack-hartmann wavefront sensor
+
+    - dfws.wavefront                        # loaded wavefront
+
+    - dfws.image                            # image that would be seen by the main sensor
+
+    - dfws.image_sh                         # image that would be seen by the shack-hartmann wavefront sensor
+    
+use dir(dfws) to get a complete overview of all the available functions and variables
+    
+-------------------------------------------------------------------------------------------------------------------------------------------------------
 """
 
 import aotools
@@ -29,14 +61,36 @@ import glob
 from random import choice
 cupy = 0
 
+def free_gpu_memory():
+    """
+    Frees up GPU memory by making reserved blocks available
+    
+    Inputs:
+    
+    None, all variables come from globals
+    
+    Outputs:
+    
+    None
+    """
+    if cupy:
+        mempool.free_all_blocks()
+        pinned_mempool.free_all_blocks()
+
 def to_numpy(x):
-    # Returns a variable from either cupy or numpy to numpy
-    # cupy is the CUDA accelerated version of numpy and will
-    # be used by this class if supported by the hardware
-    # Input:
-    # x: either a numpy or cupy array
-    # Output:
-    # x: a numpy array
+    """
+    Returns a variable from either cupy or numpy to numpy.
+    Cupy is the CUDA accelerated version of numpy and will
+    be used by this class if supported by the hardware
+    
+    Input:
+        
+    x: either a numpy or cupy array
+    
+    Output:
+        
+    x: a numpy array
+    """
     
     try:
         return cp.asnumpy(x)
@@ -44,11 +98,17 @@ def to_numpy(x):
         return x
 
 def convolve2(a, b):
-    # Fourier domain convolution between two matrices
-    # Input:
-    # a, b: two square matrices to be convoluted with each other
-    # Output:
-    # c: the result of the convolution between a and b
+    """
+    Fourier domain convolution between two matrices
+    
+    Input:
+        
+    a, b: two square matrices to be convoluted with each other
+    
+    Output:
+        
+    c: the result of the convolution between a and b
+    """
     
     # Make sure matrices are square
     if a.shape[0] != a.shape[1] or b.shape[0] != b.shape[1]:
@@ -64,9 +124,13 @@ def convolve2(a, b):
     return c
 
 def random(randomness, percentage):
-    # Returns a number between 1-percentage and 1+percentage
-    # Input: Randomness [0 or 1]
-    # Output: Percentage [0 - 100]
+    """
+    Returns a number between 1-percentage and 1+percentage
+    
+    Input: Randomness [0 or 1]
+    
+    Output: Percentage [0 - 100]
+    """
     if randomness:
         out = np.random.rand()*percentage/50+(1-percentage/100)
     else:
@@ -74,18 +138,25 @@ def random(randomness, percentage):
     return out
 
 def step_down(rr,f11, f12, f21, f22):
-    # Function used for function wavefront_Kolmogorov
-    # The input is values of a square section of wavefront, the output 
-    # generated new point in between the square section by interpolating
-    # and adding a random value depending on the turbulence strength
-    #
-    # Input:
-    # rr: Relative turbulence strength
-    # f11 to f22: values of pre-defined square or wavefront values
-    # Output:
-    # o_c: value of center pixel
-    # o_xx_yy: value of pixel between inputs fxx and fyy
+    """
+    Function used for function wavefront_Kolmogorov
+    The input is values of a square section of wavefront, the output 
+    generated new point in between the square section by interpolating
+    and adding a random value depending on the turbulence strength
     
+    Input:
+        
+    rr: Relative turbulence strength
+    
+    f11 to f22: values of pre-defined square or wavefront values
+    
+    Output:
+        
+    o_c: value of center pixel
+    
+    o_xx_yy: value of pixel between inputs fxx and fyy
+    
+    """
     rr56=rr**(5/6);
     sq47=0.6687*rr56;
     o_c = (f11+ f12 +f21 + f22)*0.25 + (0.7804*rr56)*randn();
@@ -124,11 +195,13 @@ class DFWS:
             
         temp: Temporary variable used for system tweaking, to be removed in future version
         """        
-        global np, fft, cupy, rotate
+        global np, fft, cupy, rotate, mempool, pinned_mempool
         if cupy_req:
             import cupy as np
             from cupy import fft
             from cupyx.scipy.ndimage import rotate
+            mempool = np.get_default_memory_pool()
+            pinned_mempool = np.get_default_pinned_memory_pool()
             cupy = 1
         else:
             pass
@@ -177,7 +250,7 @@ class DFWS:
         phi_SH -= np.mean(phi_SH)
         phi_SH *= 927 #Tune this parameter for the spacing of the spots of the SH-sensor
         
-        self.pupil_func_SH_v4 = mask
+        self.pupil_func_SH_v4 = to_numpy(mask)
         self.phi_SH = to_numpy(phi_SH)
 
         
@@ -255,7 +328,7 @@ class DFWS:
          None (variables loaded into class)
         """
         self.phase_screen_Original = None
-        self.phase_screen = np.array(Phi)
+        self.phase_screen = to_numpy(np.array(Phi))
     
     def wavefront_from_disk(self, alpha, factor = 1, screen = 1):
         """
@@ -308,7 +381,7 @@ class DFWS:
         phase_screen_Crop -= np.mean(phase_screen_Crop)
         phase_screen_Crop *= pupil
         
-        self.phase_screen = phase_screen_Crop.astype('float32')
+        self.phase_screen = to_numpy(phase_screen_Crop.astype('float32'))
           
     def wavefront_kolmogorov(self, r0):
         """
@@ -369,7 +442,7 @@ class DFWS:
     
             step=int(step/2)
         ph = np.array(ph)
-        self.Kolmogorov_Screen_Big = (ph*(nmax/self.res)**(5/6)*dr0**(5/6)).astype('float32')
+        self.Kolmogorov_Screen_Big = to_numpy((ph*(nmax/self.res)**(5/6)*dr0**(5/6)).astype('float32'))
         self.phase_screen = np.array((ph[0:self.res,0:self.res]*(nmax/self.res)**(5/6)*dr0**(5/6)).astype('float32'))
         self.phase_screen *= np.array(aotools.functions.pupil.circle(self.res/2, self.res))
         self.phase_screen -= np.mean(self.phase_screen)
@@ -418,7 +491,13 @@ class DFWS:
             self.phase_screen = self.phase_screen.T
         
         # Multiply by the pupil and convert to numpy array
-        self.phase_screen *= self.Milk_PhaseScreen_pupil
+        try:
+            self.phase_screen *= self.Milk_PhaseScreen_pupil
+        except:
+            self.Milk_PhaseScreen_pupil = np.array(aotools.functions.pupil.circle(self.phase_screen.shape[0]/2, self.phase_screen.shape[0]), dtype='int8')
+            self.phase_screen *= self.Milk_PhaseScreen_pupil
+        
+        self.Milk_PhaseScreen_pupil = to_numpy(self.Milk_PhaseScreen_pupil)
         self.phase_screen = to_numpy(self.phase_screen)
         
     def make_psf(self, no_SH = False, no_main = False, no_main_wavefront = False):
@@ -467,21 +546,22 @@ class DFWS:
                 phase_screen = numpy.pad(self.phase_screen.shape, [self.phase_screen_pad])
             else:
                 downsample =  np.floor(np.arange(0, self.phase_screen.shape[0], self.phase_screen.shape[0]/self.phi_SH.shape[0])).astype('uint16')
-                phase_screen = to_numpy(self.phase_screen[downsample, ][:, downsample])
-            
+                phase_screen = self.phase_screen[downsample, ][:, downsample]
+            self.phase_screen = to_numpy(self.phase_screen)
             # Make the psf and adjust the resolution again
-            psf_sh = fft.fftshift(np.abs(fft.fft2(np.array(self.pupil_func_SH_v4)*np.exp(complex(1j)*np.array(self.phi_SH)+complex(1j)*np.array(phase_screen))))**2)
-            downsample =  np.floor(np.arange(0, psf_sh.shape[0], psf_sh.shape[0]/self.res_SH)).astype('int')
+            psf_sh = numpy.fft.fftshift(numpy.abs(numpy.fft.fft2((self.pupil_func_SH_v4*numpy.exp(complex(1j)*self.phi_SH+complex(1j)*to_numpy(phase_screen)))))**2)
+            downsample =  numpy.floor(numpy.arange(0, psf_sh.shape[0], psf_sh.shape[0]/self.res_SH)).astype('int')
             self.psf_sh = (psf_sh[downsample, ][:, downsample]+psf_sh[downsample+1, ][:, downsample+1]+psf_sh[downsample+2, ][:, downsample+2])
-            self.psf_sh -= np.min(self.psf_sh)
-            self.psf_sh /= np.max(self.psf_sh)
+            self.psf_sh -= numpy.min(self.psf_sh)
+            self.psf_sh /= numpy.max(self.psf_sh)
             self.psf_sh = self.psf_sh.astype('float16')
             self.phase_screen = to_numpy(self.phase_screen)
             self.phase_screen_SH = to_numpy(phase_screen)
-        
+            free_gpu_memory()
         # Make the Main sensor psf
         # Adjust the phase screen resolution
         if not no_main_wavefront:
+            free_gpu_memory()
             self.wavefront = numpy.zeros([self.res, self.res], dtype = 'float32')
             if self.phase_screen.shape[0] < self.wavefront.shape[0]:
                 # x2 = np.linspace(0, 1,  self.wavefront.shape[0])
@@ -493,22 +573,24 @@ class DFWS:
                 x2 = numpy.linspace(0, 1,  self.wavefront.shape[0])
                 y2 = numpy.linspace(0, 1,  self.wavefront.shape[0])
                 f = interp2d(numpy.linspace(0, 1, self.phase_screen.shape[0]), numpy.linspace(0, 1, self.phase_screen.shape[0]),  self.phase_screen, kind='cubic')
-                self.wavefront = np.array(f(x2, y2), dtype = 'float32')
-                self.wavefront *= np.array(aotools.functions.pupil.circle(self.wavefront.shape[0]/2, self.wavefront.shape[0]))
+                self.wavefront = numpy.array(f(x2, y2), dtype = 'float32')
+                self.wavefront *= numpy.array(aotools.functions.pupil.circle(self.wavefront.shape[0]/2, self.wavefront.shape[0]))
             elif self.phase_screen.shape[0] == self.wavefront.shape[0]:
                 self.wavefront = self.phase_screen
             else:
                 downsample =  numpy.floor(numpy.arange(0, self.phase_screen.shape[0], self.phase_screen.shape[0]/self.wavefront.shape[0])).astype('uint16')
                 self.wavefront = to_numpy(self.phase_screen[downsample, ][:, downsample])
-                
+            self.wavefront = to_numpy(self.wavefront)
+            free_gpu_memory()
         if not no_main:
+            free_gpu_memory()
             # Make the psf and adjust the resolution again
             wavefront_Pad = numpy.pad(self.wavefront, self.pad_main)[0:self.pupil_func.shape[0], 0:self.pupil_func.shape[0]]
             psf = fft.fftshift(np.abs(fft.fft2(np.array(self.pupil_func)*np.exp(complex(1j)*np.array(wavefront_Pad))))**2)
             psf -= np.min(psf)
             psf /= np.max(psf)
             self.psf = to_numpy(psf[self.pad_main:-self.pad_main, self.pad_main:-self.pad_main].astype('float16'))
-            
+            free_gpu_memory()
     def load_object(self, Object):
         """
         Load an object and calculate resulting image
@@ -522,15 +604,15 @@ class DFWS:
         None (variables loaded into class)
         """
         # Convert object to grey scale if needed and normalize the image
-        if not Object is None:
-            Object = np.array(Object)
-            if len(Object.shape) == 3:
-                Object = np.sum(Object, axis=-1).astype('float32')
-            Object -= np.min(Object)
-            Object /= np.max(Object)
-            Object[Object<np.mean(Object[-50:, -50:])*2] = 0
+        # if not Object is None:
+        #     Object = np.array(Object)
+        #     if len(Object.shape) == 3:
+        #         Object = np.sum(Object, axis=-1).astype('float32')
+        #     Object -= np.min(Object)
+        #     Object /= np.max(Object)
+        #     Object[Object<np.mean(Object[-50:, -50:])*2] = 0
         
-        
+        Object = np.array(Object)
         # Check if object is given and of right dimensions, otherwise generate a template
         if Object.shape[0] < self.res:
             pad_size = (self.res-Object.shape[0])/2
@@ -543,14 +625,14 @@ class DFWS:
             Object = Object1*Object2
         
         # Save the object and match resolution for the subapertures
-        self.Object = Object.astype('float32')
+        self.Object = to_numpy(Object.astype('float32'))
         Object = np.pad(Object, 210) # This extra padding is just to make the magnifications of the different images match my particular setup
         # Object = np.pad(Object, 151) # This extra padding is just to make the magnifications of the different images match my particular setup
         downres = np.around(np.arange(0, Object.shape[0], Object.shape[0]/(self.res_SH/self.N))).astype('uint16')
         self.Object_SH = Object[downres, :]
-        self.Object_SH = self.Object_SH[:, downres].astype('float32')
-        self.object = self.Object
-        self.object_sh = self.Object_SH
+        self.Object_SH = to_numpy(self.Object_SH[:, downres].astype('float32'))
+        self.object = to_numpy(self.Object)
+        self.object_sh = to_numpy(self.Object_SH)
     
     def random_object(self):
         """
@@ -710,7 +792,8 @@ class DFWS:
         self.image_sh_Masked /= np.max(self.image_sh_Masked)
         
      
-        self.image_sh = self.image_sh_Masked
+        self.image_sh = to_numpy(self.image_sh_Masked)
+        self.image = to_numpy(self.image)
         
         # some subapertures will not be visible in the real shack-hartmann sensor
         # and need to be remove manually. Adapt these lines as needed for proper
@@ -724,6 +807,12 @@ class DFWS:
             self.image_sh[-int(int(680/6)):, 0:int(int(680/3))] = 0
             self.image_sh[-int(int(680/3)):, -int(int(680/6)):] = 0
             self.image_sh[-int(int(680/6)):, -int(int(680/3)):] = 0
+            
+        if self.N == 12:
+            for i in range(12):
+                for j in range(12):
+                    if np.sqrt((i-5.5)**2+(j-5.5)**2) > 5:
+                        self.image_sh[int(680/12*i):int(680/12*(i+1)), int(680/12*j):int(680/12*(j+1))] = 0 
         
     def zernike_from_wavefront(self, N_zernike):
         """
@@ -757,7 +846,7 @@ class DFWS:
             # print('Zernike wavefront calculated and saved')
         
         phi = np.reshape(self.phase_screen, [self.phase_screen.shape[0]**2])
-        self.zCoeffs = np.dot(phi,zernike_inv)
+        self.zCoeffs = to_numpy(np.dot(phi,zernike_inv))
         return self.zCoeffs
         
     def wavefront_to_128(self):
@@ -929,15 +1018,13 @@ class DFWS:
         
         # Generated matrices if not already loaded
         if not hasattr(self, 'B') or not hasattr(self, 'B_inv') or mode != self.remove_ptt_mode:
-            B = np.array(aotools.functions.zernike.zernikeArray(3, shape), dtype = 'float32').reshape([3, shape*shape])
-            B_inv = np.linalg.pinv(B)
-            self.B = to_numpy(B)
-            self.B_inv = to_numpy(B_inv)
+            self.B = numpy.array(aotools.functions.zernike.zernikeArray(3, shape), dtype = 'float32').reshape([3, shape*shape])
+            self.B_inv = numpy.linalg.pinv(self.B)
         
         # Calculate the presence of each mode and remove them
-        x = np.dot(self.__dict__[mode].reshape([shape*shape]), np.array(self.B_inv))
-        self.__dict__[mode] -= np.dot(x, np.array(self.B)).reshape([shape, shape])
-        
+        self.__dict__[mode] = to_numpy(self.__dict__[mode])
+        x = numpy.dot(self.__dict__[mode].reshape([shape*shape]), numpy.array(self.B_inv))
+        self.__dict__[mode] -= numpy.dot(x, numpy.array(self.B)).reshape([shape, shape])
         # Store the mode, so that if a different mode is selected next time it is known that the matrices need to be calculated again
         self.remove_ptt_mode = mode
         return
