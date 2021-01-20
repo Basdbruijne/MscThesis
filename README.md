@@ -18,3 +18,6 @@ This folder contains the python code used in my Thesis.
     
 --------
 
+Example output of dfws_solver.py:
+
+![alt text](https://github.com/Basdbruijne/MscThesis/blob/master/Reconstruction.png?raw=true)
