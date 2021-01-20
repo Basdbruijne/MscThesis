@@ -55,3 +55,5 @@ solver.plot_object(setup)
 
 #%% Plot the results
 solver.plot_wavefront(setup)
+
+

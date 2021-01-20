@@ -1,8 +1,6 @@
 """
 Deconvolution from wavefront Sensing Simulator!!
 
-This file contains a class DFWS that has all the tools needed to simulate a deconvolution from wavefront sensing adaptive optics system.
-
 Created by Bas de Bruijne, aug 26, 2020
 
 For questions, contact BasdBruijne@gmail.com
