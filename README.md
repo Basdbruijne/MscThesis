@@ -20,4 +20,9 @@ This folder contains the python code used in my Thesis.
 
 Example output of dfws_solver.py:
 
+Estimating the true object:
 ![alt text](https://github.com/Basdbruijne/MscThesis/blob/master/Reconstruction.png?raw=true)
+
+Estimating the wavefront using deep learning wavefront sensing:
+
+![alt text](https://github.com/Basdbruijne/MscThesis/blob/master/Wavefront.png?raw=true)
