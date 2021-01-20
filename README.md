@@ -26,7 +26,6 @@ Estimating the true object:
 ![alt text](https://github.com/Basdbruijne/MscThesis/blob/master/Reconstruction.png?raw=true)
 
 Estimating the wavefront using deep learning wavefront sensing:
-Phase Sceen 1 = true wavefront, Phase Screen 2 = deep learning wavefront sensing estimated wavefront
 
 ![alt text](https://github.com/Basdbruijne/MscThesis/blob/master/Wavefront.png?raw=true)
  
