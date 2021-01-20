@@ -1,5 +1,7 @@
 This folder contains the python code used in my Thesis.
 
+All the python files start with a discription of what the file does and how the files relate to eachother.
+
 ------------
 
     ├── NeuralNetworks	        <- Folder containting the neural networks
