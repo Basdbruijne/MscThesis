@@ -5,6 +5,33 @@ Created by Bas de Bruijne, Sep 09, 2020
 
 For questions, contact BasdBruijne@gmail.com
 
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+EXAMPLE OF HOW TO USE THIS FILE
+
+
+import DFWS_Simulator as sim
+
+import dfws_solver as solver
+
+# Fist, use DFWS_Simulator to generate a DFWS class object:
+
+dfws = sim.DFWS(1, 6, 680, 680, 0, 0, .6)   # Initialise system with diameter of 1, 6x6 shack-hartmann sensor and 680x680 pixels of imaging resolution
+
+dfws.random_object()                        # Load Object
+
+dfws.wavefront_kolmogorov(0.2)              # Make D/r0 = 5 turbulent phase screen
+
+dfws.make_psf()                             # Adjust the wavefront to the right size and generate the point spread functions
+
+dfws.make_image()                           # Generate the output images
+
+# Now, interact with dfws using the solver:
+    
+solver.get_wavefront_DLWFS(dfws)            # Use my developed deep learning wavefront sensing method to retrieve the wavefront
+
+objest_est = solver.deconvolve(dfws)        # Estimate object using PSF loaded in dfws (solver.get_wavefront_DLWFS(dfws) loads the estimated psf automatically)
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------
 """
 
 import DFWS_Simulator as sim
@@ -21,9 +48,26 @@ import cupy as cp
 import threading
 from scipy.signal import convolve2d
 from copy import copy
+import tensorflow as tf
 
 cupy = 0
 
+def free_gpu_memory():
+    """
+    Frees up GPU memory by making reserved blocks available
+    
+    Inputs:
+    
+    None, all variables come from globals
+    
+    Outputs:
+    
+    None
+    """
+    if cupy:
+        mempool.free_all_blocks()
+        pinned_mempool.free_all_blocks()
+    
 def tonumpy(x):
     """
     Returns a variable from either cupy or numpy to numpy
@@ -82,12 +126,14 @@ def numpy_or_cupy(cupy_req):
     
     None
     """
-    global np, fft, rotate, cupy
+    global np, fft, rotate, cupy, mempool, pinned_mempool
     if cupy_req:
         import cupy as np  
         from cupy import fft
         from cupyx.scipy.ndimage import rotate
         cupy = 1
+        mempool = np.get_default_memory_pool()
+        pinned_mempool = np.get_default_pinned_memory_pool()
     else:
         import numpy as np 
         from numpy import fft
@@ -215,8 +261,9 @@ def Run_SH_TIP_test(setup, iterations = 3, o_0 = None, psf_0 = None, pupil = Non
     
     o: Estimated SH object
     """
-    numpy_or_cupy(setup.cupy_req)
     
+    numpy_or_cupy(setup.cupy_req)
+    free_gpu_memory()
     # If no inital estimate is provided, use circular function with ones
     if o_0 is None:
         object_est = np.array(aotools.functions.pupil.circle(setup.res_SH/setup.N/5, int(np.ceil(setup.res_SH/setup.N)), circle_centre=(0, 0), origin='middle'))
@@ -227,10 +274,10 @@ def Run_SH_TIP_test(setup, iterations = 3, o_0 = None, psf_0 = None, pupil = Non
         warnings.warn("Initial estimates of both object and psf are provided. Only psf estimate will be used")
 
     # Initialize function for deconvolution
-    o_zero = fft.fftshift(np.pad(object_est, [int(np.floor((setup.image_sh.shape[0]+1)/2)), int(np.ceil((setup.image_sh.shape[0]+1)/2))], mode='constant'))
-    i_F = fft.fft2(np.pad(setup.image_sh, [0, int(object_est.shape[0]+1)], mode='constant'))
+    o_zero = fft.fftshift(np.array(numpy.pad(tonumpy(object_est), [int(np.floor((setup.image_sh.shape[0]+1)/2)), int(np.ceil((setup.image_sh.shape[0]+1)/2))], mode='constant')))
+    i_F = fft.fft2(np.array(numpy.pad(tonumpy(setup.image_sh), [0, int(object_est.shape[0]+1)], mode='constant')))
     o_F = fft.fft2(o_zero)
-    
+    free_gpu_memory()
     # Generate tip_pupil if not yet loaded into setup. This function limits the extent of the estimated object
     if not hasattr(setup, 'tip_pupil'):
         if pupil is None:
@@ -238,7 +285,7 @@ def Run_SH_TIP_test(setup, iterations = 3, o_0 = None, psf_0 = None, pupil = Non
             setup.tip_pupil  += .1*(setup.tip_pupil == 0)
         else:
             setup.tip_pupil = pupil
-    
+    free_gpu_memory()
     # Run the TIP-algorithm
     for n in range(0, iterations): 
         if n != 0 or psf_0 is None: # If not initial psf_estimate provided
@@ -275,11 +322,14 @@ def Run_SH_TIP_test(setup, iterations = 3, o_0 = None, psf_0 = None, pupil = Non
     
     # Crop the estimated PSF and normalize it
     psf_est = np.real(psf_est)
-    psf_est = convert_680_to_128(setup, psf_est, crop_index)
+    if setup.N == 12:
+        psf_est = convert_680_to_256(setup, psf_est)
+    else:
+        psf_est = convert_680_to_128(setup, psf_est, crop_index)
     psf_est -= np.min(psf_est)
     psf_est /= np.max(psf_est)
     setup.psf_sh_128 = psf_est
-        
+    free_gpu_memory()    
     return psf_est, fft.fftshift(o)
 
 
@@ -406,7 +456,9 @@ def deconvolve(setup, mode = 'LR', iterations = 10, regularization_term = 1e-1, 
     
     Inputs:
     
-    mode: mode of deconvolution, scroll down to see them all
+    mode: mode of deconvolution, options are: LR (lucy richardson), LR2 (accelerated LR), 
+    CPU_LR (LR but parallel), Regularization, Regularization_Filter, Regularization_Filter2
+    TIP, LR_Steepest_Descent and LR_preconditioning
     
     Iterations: amount of iterations used for the iterative methods
     
@@ -429,7 +481,7 @@ def deconvolve(setup, mode = 'LR', iterations = 10, regularization_term = 1e-1, 
         numpy_or_cupy(1)
     else:
         numpy_or_cupy(setup.cupy_req)
-    
+    free_gpu_memory()
     # Check if the setup class has an image loaded
     if not hasattr(setup, 'image'):
         raise Exception("Setup does not have an image loaded, deconvolution cannot proceed")
@@ -438,13 +490,16 @@ def deconvolve(setup, mode = 'LR', iterations = 10, regularization_term = 1e-1, 
     setup.psf /= np.sum(setup.psf)
     
     # Define the Fourier transform counterparts of the variables
-    i_F = fft.fft2(np.pad(np.array(setup.image), [int(np.floor((setup.psf.shape[0]-1)/2)), int(np.ceil((setup.psf.shape[0]-1)/2))], mode='reflect'))
-    psf_F = fft.fft2(np.pad(np.array(setup.psf), [0, setup.image.shape[0]-1], mode='constant'))
-    o_F = i_F
-
+    pad_i = (setup.psf.shape[0]-1)/2
+    pad_psf = setup.image.shape[0]-1
+    i_F = fft.fft2((np.pad(np.array(setup.image), [int(np.floor(pad_i)), int(np.ceil(pad_i))], mode='reflect')))
+    psf_F = fft.fft2((np.pad(np.array(setup.psf), [0, pad_psf], mode='constant')))
+    o_F = copy(i_F)
+    
     # If the deconvolution mode requires a mirrord psf, generate it
     if 'LR' in mode or mode == 'Steepest_Descent':
-        psf_mirror_F = fft.fft2(np.pad(np.array(setup.psf[::-1, ::-1]), [setup.image.shape[0]-1, 0], mode='constant'))
+        psf_mirror_F = fft.fft2((np.pad(np.array(setup.psf[::-1, ::-1]), [pad_psf, 0], mode='constant')))
+    
     
     # Lucy richardson: the deconvolution used is actually the landweber method, which is nearly identical to the lucy richardson
     # deconvolution except that it is fully in the frequency domain, making it significantly faster
@@ -591,13 +646,13 @@ def deconvolve(setup, mode = 'LR', iterations = 10, regularization_term = 1e-1, 
             d = psf_mirror_F*v
             
     else:
-        raise Exception('Deconvolution method not recognized')
+        raise Exception('Mode of deconvolution not recognized, options are: LR (lucy richardson), LR2 (accelerated LR), CPU_LR (LR but parallel), Regularization, Regularization_Filter, Regularization_Filter2, TIP, LR_Steepest_Descent and LR_preconditioning')
     
     # Calculate the output and normalize it
     output = np.abs(fft.ifft2(o_F))
     output -= np.min(output)
     output /= np.max(output)
-
+    free_gpu_memory()
     return setup, tonumpy(output[0:setup.image.shape[0], 0:setup.image.shape[0]]).astype('float16')
 
 def convert_680_to_256(setup, psf_est):
@@ -657,7 +712,7 @@ def convert_680_to_128(setup, psf_est, index = None):
             index = numpy.r_[index, int(begin[i]):int(end[i])]
             
         index = np.array(index)
-        out = psf_est[index][:,index]
+        out = np.array(psf_est)[index][:,index]
         if setup.N == 10:
             out = out[1:-1, 1:-1]
     else:
@@ -1028,8 +1083,9 @@ def get_wavefront_DLWFS(setup, model, test = True, tip_iterations = 3):
     
     None
     """
-
-    downres = np.around(np.arange(0, 680, (680+210*2)/(setup.res_SH/setup.N))).astype('uint16')
+    numpy_or_cupy(setup.cupy_req)
+    
+    downres = numpy.around(numpy.arange(0, 680, (680+210*2)/(setup.res_SH/setup.N))).astype('uint16')
     obj_est = setup.image[downres,][:,downres]
 
     
@@ -1042,12 +1098,16 @@ def get_wavefront_DLWFS(setup, model, test = True, tip_iterations = 3):
     setup.psf_est = psf_est
     setup.o_est = o
 
-    predictions  = model.predict((psf_est.reshape([1]+list(psf_est.shape)+[1])).astype('float16'))
+    psf_est = tonumpy(psf_est)
+    
+    with tf.device('/CPU:0'):
+        predictions  = model.predict((psf_est.reshape([1]+list(psf_est.shape)+[1])).astype('float16'))
+            
     setup.load_wavefront(predictions[0, :, :, 0])
-    setup.make_psf()
-    pupil = np.array(aotools.functions.pupil.circle(340, 680))
+    setup.make_psf(no_SH = True)
+    pupil = numpy.array(aotools.functions.pupil.circle(340, 680))
     setup.wavefront *= pupil
-    setup.wavefront -= np.mean(setup.wavefront)
+    setup.wavefront -= numpy.mean(setup.wavefront)
     setup.wavefront *= pupil
     setup.wavefront_DLWFS = setup.wavefront
 
@@ -1056,7 +1116,7 @@ def plot_wavefront(setup):
     Make a nice plot of the calculated wavefronts
     """
     
-    cmap = plt.cm.get_cmap('RdYlGn')
+    cmap = copy(plt.cm.get_cmap('RdYlGn'))
     cmap.set_bad(alpha = 0)
 
     if hasattr(setup, 'wavefront_zonal') and hasattr(setup, 'wavefront_modal'): 
@@ -1067,25 +1127,25 @@ def plot_wavefront(setup):
         fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(10,10))
         image1 = setup.wavefront_0.astype('float32')
         image1[image1 == 0] = np.nan
-        im = axes[0, 0].imshow(image1, cmap=cmap, vmin=-v, vmax=v)
+        im = axes[0, 0].imshow(tonumpy(image1), cmap=cmap, vmin=-v, vmax=v)
         axes[0, 0].set_title('True Wavefront')
         axes[0, 0].axis('off')
         
         image1 = setup.wavefront.astype('float32')
         image1[image1 == 0] = np.nan
-        im = axes[0, 1].imshow(image1, cmap=cmap, vmin=-v, vmax=v)
+        im = axes[0, 1].imshow(tonumpy(image1), cmap=cmap, vmin=-v, vmax=v)
         axes[0, 1].set_title('Predicted Wavefront DLWFS')
         axes[0, 1].axis('off')
         
         image1 = setup.wavefront_zonal.astype('float32')
         image1[image1 == 0] = np.nan
-        im = axes[1, 0].imshow(image1, cmap=cmap, vmin=-v, vmax=v)
+        im = axes[1, 0].imshow(tonumpy(image1), cmap=cmap, vmin=-v, vmax=v)
         axes[1, 0].set_title('Predicted Wavefront Zonal')
         axes[1, 0].axis('off')
         
         image1 = setup.wavefront_modal.astype('float32')
         image1[image1 == 0] = np.nan
-        im = axes[1, 1].imshow(image1, cmap=cmap, vmin=-v, vmax=v)
+        im = axes[1, 1].imshow(tonumpy(image1), cmap=cmap, vmin=-v, vmax=v)
         axes[1, 1].set_title('Predicted Wavefront Modal')
         axes[1, 1].axis('off')
     else:
@@ -1095,13 +1155,13 @@ def plot_wavefront(setup):
         fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(10,5))
         image1 = setup.wavefront_0.astype('float32')
         image1[image1 == 0] = np.nan
-        im = axes[0].imshow(image1, cmap=cmap, vmin=-v, vmax=v)
+        im = axes[0].imshow(tonumpy(image1), cmap=cmap, vmin=-v, vmax=v)
         axes[0].set_title('Phase Screen 1')
         axes[0].axis('off')
         
         image1 = setup.wavefront.astype('float32')
         image1[image1 == 0] = np.nan
-        im = axes[1].imshow(image1, cmap=cmap, vmin=-v, vmax=v)
+        im = axes[1].imshow(tonumpy(image1), cmap=cmap, vmin=-v, vmax=v)
         axes[1].set_title('Phase Screen 2')
         axes[1].axis('off')
     
@@ -1114,13 +1174,13 @@ def plot_object(setup):
     Make a nice plot of the calculated wavefronts
     """
     fig, axes = plt.subplots(nrows=1, ncols=3, figsize=(15,5))
-    im = axes[0].imshow(setup.object.astype('float32'), cmap='gray')
+    im = axes[0].imshow(tonumpy(setup.object).astype('float32'), cmap='gray')
     axes[0].set_title('True Object')
     axes[0].axis('off')
-    im = axes[1].imshow(setup.image.astype('float32'), cmap='gray')
+    im = axes[1].imshow(tonumpy(setup.image).astype('float32'), cmap='gray')
     axes[1].set_title('Received Image')
     axes[1].axis('off')
-    im = axes[2].imshow(setup.object_estimate.astype('float32'), cmap='gray')
+    im = axes[2].imshow(tonumpy(setup.object_estimate).astype('float32'), cmap='gray')
     axes[2].set_title('Estimated Object')
     axes[2].axis('off')
 
@@ -1130,17 +1190,18 @@ def plot_rms_bar(RMSE, names):
     """
     Make a nice plot of the RMSE wavefront estimation performances
     """
+    numpy_or_cupy(0)
     plt.figure(figsize=(12,5))
     spacing = .1
     for i in range(len(names)):
-        plt.errorbar(np.arange(0, RMSE.shape[0])-(spacing*2-spacing*i)/1.5, np.mean(RMSE[:, i], axis=-1), yerr= np.std(RMSE[:, i], axis=-1), fmt='o', label=names[i])
+        plt.errorbar(np.arange(0, RMSE.shape[0])-(spacing*2-spacing*i)/1.5, np.mean(RMSE[:, i], axis=-1), yerr= np.std(RMSE[:, i], axis=-1), fmt='*--', label=names[i])
     plt.xticks(np.arange(0, RMSE.shape[0]))
     plt.xlabel('D/r0')
     plt.ylabel('RMS Wavefront Error [rad]')
     plt.legend(loc="upper left")
     plt.title('Wavefront Estimation Error')
     plt.plot([-100, 100], [1, 1], 'k--')
-    plt.axis([-.5, 17.5, 0, 4])
+    plt.axis([-.5, 24.5, 0, 2.5])
     
 def rmse(setup, b = None):
     """
@@ -1159,15 +1220,16 @@ def rmse(setup, b = None):
     
     
     """
+    
     if hasattr(setup, 'wavefront') and hasattr(setup, 'wavefront_0') and b is None:
         
-        mse = np.mean((setup.wavefront-setup.wavefront_0)**2)
+        mse = numpy.mean((tonumpy(setup.wavefront)-tonumpy(setup.wavefront_0))**2)
         
         # Fill factor is the amount of pixels actually in the circle, for which the rms wavefront error needs to be compensated, should be around pi/4, depending on the resolution
-        fill_factor = np.sum(aotools.functions.pupil.circle(setup.wavefront.shape[0]/2, setup.wavefront.shape[0]))/setup.wavefront.shape[0]**2    
-        rms = np.sqrt(mse/fill_factor)
+        fill_factor = numpy.sum(aotools.functions.pupil.circle(setup.wavefront.shape[0]/2, setup.wavefront.shape[0]))/setup.wavefront.shape[0]**2    
+        rms = numpy.sqrt(mse/fill_factor)
         
     elif setup.shape == b.shape:
-        rms = np.sqrt(np.mean((setup-b)**2))
+        rms = numpy.sqrt(numpy.mean((tonumpy(setup)-tonumpy(b))**2))
         
     return rms
