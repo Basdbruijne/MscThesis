@@ -1,4 +1,4 @@
-This projects is a deconvolution from wavefront sensing (DFWS) simulation as well as the software to be implemented in a real telescope.
+This project is a deconvolution from wavefront sensing (DFWS) simulation as well as the software to be implemented in a real telescope.
 Telescopes have limited image quality due to atmospheric turbulence that interferes with the light. The influence of the atmospheric turbulence can be 
 measured using a wavefront sensor. A DFWS telescope has two imaging sensors: the wavefront sensor and the main sensor. From the wavefront sensor, it is
 possible to predict how the main sensors data is corrupted. This corruption can be undone using deconvolution.
