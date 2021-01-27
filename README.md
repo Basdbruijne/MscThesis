@@ -4,7 +4,7 @@ measured using a wavefront sensor. A DFWS telescope has two imaging sensors: the
 possible to predict how the main sensors data is corrupted. This corruption can be undone using deconvolution.
 
 In this project, it is shown that AI can be used for this task, independent of what the telescope is pointed at. This new way of reading out the wavefront sensor
-is proven to work at least twice as well as conventional ways.
+is proven to work at least twice as well as conventional ways. A link to the final report will follow.
 
 This folder contains the python code used in my Thesis.
 
