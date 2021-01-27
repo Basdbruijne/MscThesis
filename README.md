@@ -1,3 +1,11 @@
+This projects is a deconvolution from wavefront sensing (DFWS) simulation as well as the software to be implemented in a real telescope.
+Telescopes have limited image quality due to atmospheric turbulence that interferes with the light. The influence of the atmospheric turbulence can be 
+measured using a wavefront sensor. A DFWS telescope has two imaging sensors: the wavefront sensor and the main sensor. From the wavefront sensor, it is
+possible to predict how the main sensors data is corrupted. This corruption can be undone using deconvolution.
+
+In this project, it is shown that AI can be used for this task, independent of what the telescope is pointed at. This new way of reading out the wavefront sensor
+is proven to work at least twice as well as conventional ways.
+
 This folder contains the python code used in my Thesis.
 
 All the python files start with a discription of what the file does and how the files relate to eachother.
