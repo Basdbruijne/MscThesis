@@ -21,8 +21,7 @@ plt.close('all')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 #%% Import neural network from file
 print('Downloading Network')
-network_location = 'NeuralNetworks/Unet_set_01_12/'
-model = tf.keras.models.load_model(network_location+'Batch_Size_32_Loss_0.51_Val_Loss_0.51')
+model = tf.keras.models.load_model("<Path to neural network>")
 
 
 #%% Initialize DFWS class
@@ -31,7 +30,7 @@ setup = sim.DFWS(10, 6, 680, 680, True, 0, .6)
 # Choose source of phase screen
 
 setup.wavefront_kolmogorov(1)
-setup.make_psf(no_SH = False, no_main = False, no_main_wavefront = False)
+setup.make_psf()
 setup.random_object()
 setup.make_image()
 
@@ -41,7 +40,7 @@ setup.psf_0 = setup.psf
 setup.psf_sh_0 = setup.psf_sh
 
 #%% Estimate the wavefront
-solver.get_wavefront_DLWFS(setup, model, test = True, tip_iterations = 3)
+solver.get_wavefront_DLWFS(setup, model, tip_iterations = 3)
 setup.remove_ptt('wavefront_0')
 
 # Plot the results of the TIP-algorithm
@@ -49,7 +48,7 @@ plot(solver.convert_680_to_128(setup, setup.psf_sh_0))
 plot(setup.psf_est)
 
 #%% Deconvolve Image
-setup, objectt = solver.deconvolve(setup, mode = 'LR', iterations=25)
+setup, objectt = solver.deconvolve(setup, mode = 'LR', iterations=0)
 setup.object_estimate = objectt
 solver.plot_object(setup)
 
