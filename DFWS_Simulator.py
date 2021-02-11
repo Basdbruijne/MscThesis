@@ -70,6 +70,8 @@ import glob
 from random import choice
 from  aotools.functions.pupil import circle
 from aotools.functions.zernike import zernikeArray
+from copy import copy
+from scipy import sparse
 cupy = 0
 
 def free_gpu_memory():
@@ -184,11 +186,12 @@ class DFWS:
         temp: Temporary variable used for system tweaking, to be removed in 
               future version
         """        
-        global np, fft, cupy, rotate, mempool, pinned_mempool
+        global np, fft, cupy, rotate, mempool, pinned_mempool, sparse
         if cupy_req:
             import cupy as np
             from cupy import fft
             from cupyx.scipy.ndimage import rotate
+            from cupyx.scipy import sparse
             mempool = np.get_default_memory_pool()
             pinned_mempool = np.get_default_pinned_memory_pool()
             cupy = 1
@@ -284,15 +287,18 @@ class DFWS:
         # Check if wavefront modes are already loaded or present in file
         Res = self.res#max(self.res, self.res_SH)
         if not hasattr(self, 'Zs'):
-            file = 'wavefronts/' + str(self.zCoeffs.shape[0]) 
-            + '_' + str(Res) + '.npy'
+            file = ('wavefronts/' + str(self.zCoeffs.shape[0]) 
+            + '_' + str(Res) + '.npy')
             try:
                 self.Zs = to_numpy(np.load(file))
             except:
                 if not os.path.exists('wavefronts'):
-                    os.makedirs('wavefronts')
+                    try:
+                        os.makedirs('wavefronts')
+                    except:
+                        pass
                 self.Zs = zernikeArray(self.zCoeffs.shape[0], Res)
-                self.Zs = to_numpy(np.array(self.Zs), dtype = 'float16')
+                self.Zs = to_numpy(np.array(self.Zs, dtype = 'float16'))
                 
                 numpy.save(file, self.Zs.astype('float16'))
 
@@ -314,7 +320,7 @@ class DFWS:
         # Make wavefront from wavefrond modes and coefficients
         phase_screen = np.tensordot(np.array(self.zCoeffs), 
                                     np.array(self.Zs), 
-                                    axes=1).astype('float16')
+                                    axes=1)#.astype('float16')
         
         # Make the wavefront zero-mean 
         pupil = np.array(circle(phase_screen.shape[0]/2, 
@@ -410,10 +416,12 @@ class DFWS:
         phase_screen_Crop *= pupil
         
         self.phase_screen = to_numpy(phase_screen_Crop.astype('float32'))
-          
-    def wavefront_kolmogorov(self, r0):
+        
+   
+    def wavefront_kolmogorov_Vdovin(self, r0):
         """
-        Make a phase screen based on Kolmogorov statistics
+        Make a phase screen based on Kolmogorov statistics, using Gleb Vdovins
+        code.
         
         Inputs:
         
@@ -443,6 +451,8 @@ class DFWS:
         It is later cropped to the required resolution. Use milk_phaseScreen 
         to reuse the original size phase screen
         """
+        
+        warnings.warn("It is recommended to use wavefront_kolmogorov instead")
         
         def step_down(rr,f11, f12, f21, f22):
             """
@@ -513,6 +523,206 @@ class DFWS:
     
             step=int(step/2)
         ph = np.array(ph)
+        self.Kolmogorov_Screen_Big = to_numpy((ph*(nmax/self.res)**(5/6)
+                                               *dr0**(5/6)).astype('float32'))
+        self.phase_screen = np.array((ph[0:self.res,0:self.res]*(nmax/self.res)
+                                      **(5/6)*dr0**(5/6)).astype('float32'))
+        self.phase_screen *= np.array(circle(self.res/2, self.res))
+        self.phase_screen -= np.mean(self.phase_screen)
+        self.phase_screen *= np.array(circle(self.res/2, self.res))
+        self.phase_screen = to_numpy(self.phase_screen)
+        
+    def wavefront_kolmogorov(self, r0, switch = 32, force_cpu = True):
+        """
+        Make a phase screen based on Kolmogorov statistics
+        
+        Inputs:
+        
+        r0: fried parameter. Only the ratio between r0 and D (see init) 
+            is used
+            
+        switch: The resolution at which the methods switches to upsampling
+            the wavefront in blocks. Must be power of 2, decrease if the 
+            pogram gives memory errors.
+                        
+        Outputs:
+        
+        None (variables loaded into class)
+        
+        The difference between this function and wavefront_kolmogorov, is that
+        this function works with matrices and dot products rather than loops.
+        This can signiciantly speed up the process, however, it requires a lot 
+        more memory too so it may not work for larger phase screens.
+        
+        with reference to : R.G. Lane A Glindemann, C. Dainty
+        
+        "Simulation of a Kolmogorov phase screen"
+        
+        Waves in Random Media 2. 1992, pp 209-224.
+        
+        This code is very flow when using cupy (due to the many loops), 
+        so only numpy is used here
+        
+       
+        
+        The phase screens generated are of size 2^n+1 with positive integer n. 
+        It is later cropped to the required resolution. Use milk_phaseScreen 
+        to reuse the original size phase screen
+        """
+
+        if not force_cpu and self.cupy_req:
+            import cupy as np
+            from cupyx.scipy import sparse
+        else:
+            import numpy as np
+            from scipy import sparse
+            
+        if np.log(switch)/np.log(2)%1:
+            raise Exception('Switch must be a power of 2')
+        
+        def make_stepdown_matrix(size_in):
+            """
+            Function used for the generation of interpolation matrices to 
+            increase the size of the wavefront.
+            
+            Input:
+                
+            size_in: Size of current wavefront
+
+            Output:
+                
+            A: matrix for: wavefront_new = A * wavefront_out + random
+                                    
+            """
+                
+            try:
+                sA = np.load('wavefronts/KolmogorovA'+str(size_in)+'.npy')
+            except:
+                size_out = 2*(size_in-1)+1
+                A = np.zeros([size_out**2, size_in**2], dtype='float16')
+                
+                B_even = np.zeros([size_out, size_in])
+                for i in range(B_even.shape[1]):
+                    if i < size_in-1:
+                        B_even[i*2+1, i+1] = 1/2
+                        B_even[i*2+1, i] = 1/2
+                    B_even[i*2, i] = 1
+                
+                B_odd = np.zeros([size_out, size_in*2])
+                for i in range(int(B_odd.shape[1]/2)):
+                    if i < size_in-1:
+                        B_odd[i*2+1, i+1] = 1/4
+                        B_odd[i*2+1, i] = 1/4
+                        B_odd[i*2+1, i+1+size_in] = 1/4
+                        B_odd[i*2+1, i+size_in] = 1/4
+                    B_odd[i*2, i] = 1/2
+                    B_odd[i*2, i+size_in] = 1/2
+                    
+                
+                for i in range(size_in):
+                    A[i*2*size_out:(i*2+1)*size_out, 
+                      i*size_in:(i+1)*size_in] = B_even
+                    if i < size_in-1:
+                        A[(i*2+1)*size_out:(i*2+2)*size_out, 
+                          i*size_in:(i+2)*size_in] = B_odd
+                        
+                sA = A
+                
+                np.save('wavefronts/KolmogorovA'+str(size_in), sA)
+            return sA
+        
+        def make_random_mask(size_out):
+            """
+            Function used for the generation of random masks to 
+            increase the size of the wavefront.
+            
+            Input:
+                
+            size_in: Size of current wavefront
+                        
+            Output:
+                
+            A: matrix for: wavefront_new = B * wavefront_out + random * A
+                        
+            """
+            try:
+                sA = np.load('wavefronts/KolmogorovA2'+str(size_out)+'.npy')
+            except:
+                A = np.zeros([size_out, size_out], dtype='uint8')
+                
+                for i in range(size_out):
+                    for j in range(size_out):
+                        if j%2 or i%2:
+                            A[i,j] = 1
+                sA = A
+                np.save('wavefronts/KolmogorovA2'+str(size_out), sA)
+                
+            return sA.astype('float32')
+        
+        self.phase_screen_Original = None
+        n_cycles = numpy.ceil(numpy.log(self.res)
+                              /numpy.log(2)).astype('uint16')
+        dr0=self.D/r0
+        nmax=int(2**(n_cycles)+1)
+        
+        # Initialize the first 4 points of the phase screen
+        ph= np.zeros([2,2], dtype='float32')
+
+        a1d=np.sqrt(10.757)*randn()/2
+        ad1=np.sqrt(10.757)*randn()/2
+        
+        ph[0, 0]=np.sqrt(0.7506)*randn()+a1d
+        ph[1,1]=np.sqrt(0.7506)*randn()-a1d
+        ph[1,0]=np.sqrt(0.7506)*randn()+ad1
+        ph[0,1]=np.sqrt(0.7506)*randn()-ad1
+        
+        # Start the upsampling
+        cycle = 1
+        while ph.shape[0] < self.res:
+            size_in = ph.shape[0]
+            size_out = 2*(size_in-1)+1
+
+            # If the resolution of larger than switch, calculate in block 
+            if size_in > switch*1.5:
+                # Setup step_down and make it space
+                step_down = sparse.csr_matrix(make_stepdown_matrix(switch+1)
+                                              .astype('float32'))
+                mask = make_random_mask(2*switch+1)
+                ph_out = np.zeros([size_out, size_out])
+                
+                # For each block in nescecary
+                for i in range(int((size_out-1)/(switch*2))):
+                    for j in range(int((size_out-1)/(switch*2))):
+                        # Crop the block out of the wavefront and make 
+                        # it sparse
+                        ph_int = sparse.csr_matrix(ph[i*switch:(i+1)*switch+1, 
+                                                      j*switch:(j+1)*switch+1]
+                                                   .reshape([(switch+1)**2,
+                                                             1]))
+                        # Perform the block product and unsparse
+                        ph_out_int = step_down.dot(ph_int)
+                        ph_out_int = ph_out_int.toarray().reshape([2*switch+1,
+                                                                   2*switch+1])
+                        ph_out_int += (0.6687*(1./(2**(cycle-1)))**(5/6) 
+                              * np.random.randn(2*switch+1, 
+                                                2*switch+1).astype('float16')
+                              * mask)
+                        # Place the calculated block in the output matrix
+                        ph_out[i*2*switch:(i+1)*2*switch+1, 
+                               j*2*switch:(j+1)*2*switch+1] = ph_out_int
+                ph = copy(ph_out)
+                
+            else:
+                ph = np.dot(make_stepdown_matrix(size_in), 
+                            ph.reshape([ph.shape[0]*ph.shape[1], 
+                                        1])).reshape([size_out,size_out])
+                    
+                ph += (0.6687*(1./(2**(cycle-1)))**(5/6) 
+                      * np.random.randn(size_out, size_out).astype('float16')
+                      * make_random_mask(size_out))
+            cycle += 1
+        
+        # Store the big wavefront and crop it to the right size
         self.Kolmogorov_Screen_Big = to_numpy((ph*(nmax/self.res)**(5/6)
                                                *dr0**(5/6)).astype('float32'))
         self.phase_screen = np.array((ph[0:self.res,0:self.res]*(nmax/self.res)
@@ -620,8 +830,8 @@ class DFWS:
             self.phase_screen = np.zeros([2050, 2050], dtype = 'float32')
             return
         
-        # The SH sensor and main sensor require different shapes of phase-screen
-        # these lines of code make sure that they are of the right shape.
+        # The SH sensor and main sensor require different shapes of phase-
+        # screen these lines of code make sure that they are the right shape.
         if not no_SH:
             # Make the SH psf:
             self.psf_sh = numpy.zeros([self.res_SH, self.res_SH]
@@ -687,9 +897,10 @@ class DFWS:
                 self.wavefront = self.phase_screen
             else:
                 size = self.phase_screen.shape[0]
-                downsample = numpy.floor(numpy.arange(0, size, 
+                downsample = (numpy.floor(numpy.arange(0, size, 
                                                       size/self.wavefront
-                                                      .shape[0])).astype('uint16')
+                                                      .shape[0]))
+                              .astype('uint16'))
                 self.wavefront = to_numpy(self.phase_screen[downsample, ]
                                           [:, downsample])
             self.wavefront = to_numpy(self.wavefront)
@@ -706,7 +917,8 @@ class DFWS:
             psf -= np.min(psf)
             psf /= np.max(psf)
             self.psf = to_numpy(psf[self.pad_main:-self.pad_main, 
-                                    self.pad_main:-self.pad_main].astype('float16'))
+                                    self.pad_main:-self.pad_main]
+                                .astype('float16'))
             free_gpu_memory()
             
     def load_object(self, Object):
@@ -732,7 +944,8 @@ class DFWS:
         #     Object[Object<np.mean(Object[-50:, -50:])*2] = 0
         
         Object = np.array(Object)
-        # Check if object is given and of right dimensions, otherwise generate a template
+        # Check if object is given and of right dimensions, otherwise 
+        #generate a template
         if Object.shape[0] < self.res:
             pad_size = (self.res-Object.shape[0])/2
             Object = np.pad(Object, [int(np.floor(pad_size)), 
@@ -888,7 +1101,7 @@ class DFWS:
         x += np.array(self.noise_pattern[0:x.shape[0], 0:x.shape[1]])
         return x
     
-    def make_image(self):
+    def make_image(self, remove_nonfull_subapertures = True):
         """
         Generated the images for the two sensors by convolution the object
         
@@ -951,7 +1164,7 @@ class DFWS:
         # some subapertures will not be visible in the real shack-hartmann 
         # sensor and need to be remove manually. Adapt these lines as needed 
         # for proper simulation of your specific shack-hartmann sensor.
-        if self.N == 6:
+        if self.N == 6 and remove_nonfull_subapertures:
             self.image_sh[0:int(int(680/3)), 0:int(int(680/6))] = 0
             self.image_sh[0:int(int(680/6)), 0:int(int(680/3))] = 0
             self.image_sh[0:int(int(680/3)), -int(int(680/6)):] = 0
