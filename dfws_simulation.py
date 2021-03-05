@@ -21,7 +21,7 @@ plt.close('all')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 #%% Import neural network from file
 print('Downloading Network')
-model = tf.keras.models.load_model("<Path to neural network>")
+model = tf.keras.models.load_model("CNN") #Path to network
 
 
 #%% Initialize DFWS class
@@ -43,12 +43,9 @@ setup.psf_sh_0 = setup.psf_sh
 solver.get_wavefront_DLWFS(setup, model, tip_iterations = 3)
 setup.remove_ptt('wavefront_0')
 
-# Plot the results of the TIP-algorithm
-plot(solver.convert_680_to_128(setup, setup.psf_sh_0))
-plot(setup.psf_est)
-
 #%% Deconvolve Image
-setup, objectt = solver.deconvolve(setup, mode = 'LR', iterations=0)
+setup, objectt = solver.deconvolve(setup, mode = 'LR',
+                                   iterations=0, min_iterations = 20)
 setup.object_estimate = objectt
 solver.plot_object(setup)
 
