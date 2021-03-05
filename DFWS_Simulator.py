@@ -186,12 +186,11 @@ class DFWS:
         temp: Temporary variable used for system tweaking, to be removed in 
               future version
         """        
-        global np, fft, cupy, rotate, mempool, pinned_mempool, sparse
+        global np, fft, cupy, rotate, mempool, pinned_mempool
         if cupy_req:
             import cupy as np
             from cupy import fft
             from cupyx.scipy.ndimage import rotate
-            from cupyx.scipy import sparse
             mempool = np.get_default_memory_pool()
             pinned_mempool = np.get_default_pinned_memory_pool()
             cupy = 1
@@ -532,7 +531,7 @@ class DFWS:
         self.phase_screen *= np.array(circle(self.res/2, self.res))
         self.phase_screen = to_numpy(self.phase_screen)
         
-    def wavefront_kolmogorov(self, r0, switch = 32, force_cpu = True):
+    def wavefront_kolmogorov(self, r0, switch = 32):
         """
         Make a phase screen based on Kolmogorov statistics
         
@@ -569,15 +568,8 @@ class DFWS:
         It is later cropped to the required resolution. Use milk_phaseScreen 
         to reuse the original size phase screen
         """
-
-        if not force_cpu and self.cupy_req:
-            import cupy as np
-            from cupyx.scipy import sparse
-        else:
-            import numpy as np
-            from scipy import sparse
             
-        if np.log(switch)/np.log(2)%1:
+        if numpy.log(switch)/numpy.log(2)%1:
             raise Exception('Switch must be a power of 2')
         
         def make_stepdown_matrix(size_in):
@@ -596,19 +588,19 @@ class DFWS:
             """
                 
             try:
-                sA = np.load('wavefronts/KolmogorovA'+str(size_in)+'.npy')
+                sA = numpy.load('wavefronts/KolmogorovA'+str(size_in)+'.npy')
             except:
                 size_out = 2*(size_in-1)+1
-                A = np.zeros([size_out**2, size_in**2], dtype='float16')
+                A = numpy.zeros([size_out**2, size_in**2], dtype='float16')
                 
-                B_even = np.zeros([size_out, size_in])
+                B_even = numpy.zeros([size_out, size_in])
                 for i in range(B_even.shape[1]):
                     if i < size_in-1:
                         B_even[i*2+1, i+1] = 1/2
                         B_even[i*2+1, i] = 1/2
                     B_even[i*2, i] = 1
                 
-                B_odd = np.zeros([size_out, size_in*2])
+                B_odd = numpy.zeros([size_out, size_in*2])
                 for i in range(int(B_odd.shape[1]/2)):
                     if i < size_in-1:
                         B_odd[i*2+1, i+1] = 1/4
@@ -628,7 +620,7 @@ class DFWS:
                         
                 sA = A
                 
-                np.save('wavefronts/KolmogorovA'+str(size_in), sA)
+                numpy.save('wavefronts/KolmogorovA'+str(size_in), sA)
             return sA
         
         def make_random_mask(size_out):
@@ -646,35 +638,35 @@ class DFWS:
                         
             """
             try:
-                sA = np.load('wavefronts/KolmogorovA2'+str(size_out)+'.npy')
+                sA = numpy.load('wavefronts/KolmogorovA2'+str(size_out)+'.npy')
             except:
-                A = np.zeros([size_out, size_out], dtype='uint8')
+                A = numpy.zeros([size_out, size_out], dtype='uint8')
                 
                 for i in range(size_out):
                     for j in range(size_out):
                         if j%2 or i%2:
                             A[i,j] = 1
                 sA = A
-                np.save('wavefronts/KolmogorovA2'+str(size_out), sA)
+                numpy.save('wavefronts/KolmogorovA2'+str(size_out), sA)
                 
             return sA.astype('float32')
         
         self.phase_screen_Original = None
         n_cycles = numpy.ceil(numpy.log(self.res)
                               /numpy.log(2)).astype('uint16')
-        dr0=self.D/r0
+        dr0=to_numpy(self.D/r0)
         nmax=int(2**(n_cycles)+1)
         
         # Initialize the first 4 points of the phase screen
-        ph= np.zeros([2,2], dtype='float32')
+        ph= numpy.zeros([2,2], dtype='float32')
 
-        a1d=np.sqrt(10.757)*randn()/2
-        ad1=np.sqrt(10.757)*randn()/2
+        a1d=numpy.sqrt(10.757)*numpy.random.randn()/2
+        ad1=numpy.sqrt(10.757)*numpy.random.randn()/2
         
-        ph[0, 0]=np.sqrt(0.7506)*randn()+a1d
-        ph[1,1]=np.sqrt(0.7506)*randn()-a1d
-        ph[1,0]=np.sqrt(0.7506)*randn()+ad1
-        ph[0,1]=np.sqrt(0.7506)*randn()-ad1
+        ph[0, 0]=numpy.sqrt(0.7506)*numpy.random.randn()+a1d
+        ph[1,1]=numpy.sqrt(0.7506)*numpy.random.randn()-a1d
+        ph[1,0]=numpy.sqrt(0.7506)*numpy.random.randn()+ad1
+        ph[0,1]=numpy.sqrt(0.7506)*numpy.random.randn()-ad1
         
         # Start the upsampling
         cycle = 1
@@ -688,7 +680,7 @@ class DFWS:
                 step_down = sparse.csr_matrix(make_stepdown_matrix(switch+1)
                                               .astype('float32'))
                 mask = make_random_mask(2*switch+1)
-                ph_out = np.zeros([size_out, size_out])
+                ph_out = numpy.zeros([size_out, size_out])
                 
                 # For each block in nescecary
                 for i in range(int((size_out-1)/(switch*2))):
@@ -704,7 +696,7 @@ class DFWS:
                         ph_out_int = ph_out_int.toarray().reshape([2*switch+1,
                                                                    2*switch+1])
                         ph_out_int += (0.6687*(1./(2**(cycle-1)))**(5/6) 
-                              * np.random.randn(2*switch+1, 
+                              * numpy.random.randn(2*switch+1, 
                                                 2*switch+1).astype('float16')
                               * mask)
                         # Place the calculated block in the output matrix
@@ -713,17 +705,17 @@ class DFWS:
                 ph = copy(ph_out)
                 
             else:
-                ph = np.dot(make_stepdown_matrix(size_in), 
+                ph = numpy.dot(make_stepdown_matrix(size_in), 
                             ph.reshape([ph.shape[0]*ph.shape[1], 
                                         1])).reshape([size_out,size_out])
                     
                 ph += (0.6687*(1./(2**(cycle-1)))**(5/6) 
-                      * np.random.randn(size_out, size_out).astype('float16')
+                      * numpy.random.randn(size_out, size_out).astype('float16')
                       * make_random_mask(size_out))
             cycle += 1
         
         # Store the big wavefront and crop it to the right size
-        self.Kolmogorov_Screen_Big = to_numpy((ph*(nmax/self.res)**(5/6)
+        self.Kolmogorov_Screen_Big = ((ph*(nmax/self.res)**(5/6)
                                                *dr0**(5/6)).astype('float32'))
         self.phase_screen = np.array((ph[0:self.res,0:self.res]*(nmax/self.res)
                                       **(5/6)*dr0**(5/6)).astype('float32'))
@@ -731,7 +723,7 @@ class DFWS:
         self.phase_screen -= np.mean(self.phase_screen)
         self.phase_screen *= np.array(circle(self.res/2, self.res))
         self.phase_screen = to_numpy(self.phase_screen)
-        
+                    
     def milk_phaseScreen(self):
         """
         This function rotates and mirrors the existing phase screen randomly, 
@@ -868,6 +860,7 @@ class DFWS:
                                                    psf_sh.shape[0], 
                                                    psf_sh.shape[0]
                                                    /self.res_SH)).astype('int')
+            self.psf_sh_full = psf_sh
             self.psf_sh = (psf_sh[downsample, ][:, downsample]
                            +psf_sh[downsample+1, ][:, downsample+1]
                            +psf_sh[downsample+2, ][:, downsample+2])
