@@ -1309,14 +1309,17 @@ def plot_rms_bar(RMSE, names, remove_outlyers = False):
             means = np.mean(RMSE_plot, axis=-1)
         plt.errorbar(np.arange(0, RMSE.shape[0])-(spacing*2-spacing*i)/1.5, 
                      means, yerr= std, fmt='o', label=names[i])
+        
+        print(names[i], 'mean RMSE = ', np.mean(means[12:]))
     plt.xticks(np.arange(0, RMSE.shape[0]))
     plt.xlabel('D/r0')
     plt.ylabel('RMS Wavefront Error [rad]')
     plt.legend(loc="upper left")
     plt.title('Wavefront Estimation Error')
     plt.plot([-100, 100], [1, 1], 'k--')
-    plt.axis([-.5, RMSE.shape[0]-.5, 0, 4])
+    plt.axis([-.5, RMSE.shape[0]-.5, 0, 3])
     
+
 def rmse(setup, b = None, unwrap = False):
     """
     Calculates the root mean square error of the circular wavefronts 
