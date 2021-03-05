@@ -12,11 +12,7 @@ All the python files start with a discription of what the file does and how the 
 
 ------------
 
-    ├── NeuralNetworks	        <- Folder containting the neural networks
-    |   └── Unet_set_01_12
-    |       └── Batch_Size_<xx>_Loss_<yy>_Val_Loss_<zz>	    <- New Unet-ish network, trained with batch size xx, loss yy [mae] and validation loss <zz>
-    |       └── Bekendam_...                                <- Bekendams network archetecture
-    |       └── Hu_...                                      <- Hus network archetecture
+    ├── CNN                     <- Folder contraining the neural network
     |
     ├── Objects                 <- Folder containing example objects to be loaded by DFWS_Simulator
     ├── Wavefronts              <- Folder containing pre-calculated matrices for DFWS_Simulator to use (will be generated automatically)
